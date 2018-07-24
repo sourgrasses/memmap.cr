@@ -1,2 +1,2 @@
 require "spec"
-require "../src/memmap.cr"
+require "../src/memmap"
