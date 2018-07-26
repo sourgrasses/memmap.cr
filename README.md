@@ -1,4 +1,5 @@
 # memmap.cr
+[![Build Status](https://travis-ci.org/sourgrasses/memmap.cr.svg?branch=master)[https://travis-ci.org/sourgrasses/memmap.cr/]
 [![Crystal Docs](https://img.shields.io/badge/Crystal-Docs-8A2BE2.svg)](https://sourgrasses.github.io/memmap/)
 
 Little lib to make using [`mmap()`](http://man7.org/linux/man-pages/man2/mmap.2.html) and related system calls relatively easy and hopefully fairly idiomatic.
