@@ -18,17 +18,28 @@ module Memmap
   end
 
   # A memory mapped buffer backed by a specified file.
+  #
+  # The safest way to access the data mapped is through the `value` getter, which returns a `Slice(UInt8)`.
+  # Any access through the raw pointer interface can cause segmentation faults or undefined behavior unless you're really careful, 
+  # while accessing the buffer through a `Slice` allows you to reap the potential benefits of using `mmap` without shooting
+  # yourself in the foot because of its bound checks.
   class MapFile
-    PAGE_SIZE = LibC.sysconf(LibC::SC_PAGESIZE).to_u64
+    {% if flag?(:x86_64) || flag?(:aarch64) %}
+      PAGE_SIZE = LibC.sysconf(LibC::SC_PAGESIZE).to_u64
+    {% elsif flag?(:i686) || flag?(:arm) || flag?(:win32) %}
+      PAGE_SIZE = LibC.sysconf(LibC::SC_PAGESIZE).to_u32
+    {% end%}
+
     DEFAULT_PERM = File::Permissions.new(0o644)
     @flag : Flag
     @prot : Prot
     @len : LibC::SizeT
     @map : UInt8*
+    @value : Bytes
 
-    getter len
-    getter map
+    getter value
 
+    # Create an instance of `MapFile`.
     def initialize(@filepath : String, mode = "r", @offset : LibC::SizeT = 0)
       stat = uninitialized LibC::Stat
       if LibC.stat(@filepath.check_no_null_byte, pointerof(stat)) == 0
@@ -44,17 +55,12 @@ module Memmap
       @flag, @prot = parse_mode(mode)
 
       @map = alloc(aligned_len, aligned_offset)
+      @value = Slice.new(@map, @len)
     end
 
+    # :nodoc:
     def finalize
       close()
-    end
-
-    def close
-      len = get_aligned_len()
-      if LibC.munmap(@map, len) == -1
-        raise Errno.new("Error unmapping file")
-      end
     end
 
     protected def alloc(aligned_len : LibC::SizeT, aligned_offset : LibC::SizeT) : UInt8*
@@ -75,6 +81,80 @@ module Memmap
 
       # Cast the `void*` returned by `mmap()` to a `char*`, `UInt8*` in Crystal
       Pointer(UInt8).new(ptr.address)
+    end
+
+    # :nodoc:
+    def append
+      # TODO: mremap and some other fiddly stuff?
+      {% if flag?(:linux) %}
+      {% elsif flag?(:darwin)  || flag?(:freebsd) || flag(:openbsd) %}
+      {% end %}
+    end
+
+    # Returns the buffer as a raw `Pointer(UInt8)`. This is unsafe, obviously.
+    def as_ptr
+      @map
+    end
+
+    # Force the map to close before the GC runs `finalize`
+    def close
+      len = get_aligned_len()
+      if LibC.munmap(@map, len) == -1
+        raise Errno.new("Error unmapping file")
+      end
+    end
+
+    # Flush changes made in the map back into the filesystem. Synchronous/blocking version.
+    def flush
+      LibC.msync(@map, @len, LibC::MS_SYNC)
+    end
+
+    # :nodoc:
+    def flush_async
+    end
+
+    # Call `mprotect` to change the 'prot' flags to be read-only
+    def make_read_only
+      len = get_aligned_len()
+      LibC.mprotect(@map, len, Prot::Read)
+    end
+
+    # Call `mprotect` to change the 'prot' flags to allow reading and writing
+    def make_writable
+      len = get_aligned_len()
+      LibC.mprotect(@map, len, Prot::ReadWrite)
+    end
+
+    def to_s
+      @value.to_s()
+    end
+
+    # Append a `Slice(UInt8)`/`Bytes` to a mapped file by writing the already-mapped buffer concatenated
+    # with the new bytes to a newly allocated mapped buffer backed by a new file.
+    # This relies on `ftruncate` and some pointer arithmetic to work correctly, so tread carefully.
+    # If you point it in the wrong direction it will eat your data.
+    def write(filepath : String, appendix : Bytes) : Symbol
+      len = get_aligned_len() + appendix.size
+      # Clean the path out and write a garbage byte in there
+      File.write(filepath, "\0")
+      fd = File.open(filepath, mode = "r+", perm = DEFAULT_PERM).fd
+
+      if LibC.ftruncate(fd, len) == -1
+        return :err
+      end
+
+      ptr = LibC.mmap(Pointer(Void).null, len, Prot::ReadWrite, Flag::Shared, fd, @offset)
+      ptr = Pointer(UInt8).new(ptr.address)
+
+      @map.copy_to(ptr, get_aligned_len())
+      appendix.copy_to(ptr + get_aligned_len(), appendix.size)
+      LibC.msync(ptr, len, LibC::MS_SYNC)
+
+      if LibC.munmap(ptr, len) == -1
+        return :err
+      end
+
+      :ok
     end
 
     protected def parse_mode(mode : String)
@@ -99,26 +179,6 @@ module Memmap
       end
 
       {flag, prot}
-    end
-
-    # Flush changes made in the map back into the filesystem.
-    # Synchronous/blocking version.
-    def flush
-      LibC.msync(@map, @len, LibC::MS_SYNC)
-    end
-
-    # Unimplemented right now
-    def flush_async
-    end
-
-    def make_read_only
-      len = get_aligned_len()
-      LibC.mprotect(@map, len, Prot::Read)
-    end
-
-    def make_writable
-      len = get_aligned_len()
-      LibC.mprotect(@map, len, Prot::Write | Prot::Read)
     end
 
     protected def get_aligned_len

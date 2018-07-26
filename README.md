@@ -1,10 +1,12 @@
 # memmap.cr
 
-Very much a WIP.
+Little lib to make using [`mmap()`](http://man7.org/linux/man-pages/man2/mmap.2.html) and related system calls relatively easy and hopefully fairly idiomatic.
 
-Little lib to make using [`mmap()`](http://man7.org/linux/man-pages/man2/mmap.2.html) and related system calls relatively easy to use.
+Right now this only handles fixed-size maps. If you need to append something to the file you have mapped you can call `MapFile.write` to `ftruncate` a file, create a new mapped buffer of the fixed size, and `memcpy` from the read buffer and the `Slice` to be appended into the second buffer.
 
-Loosely based on the [memmap crate](https://github.com/danburkert/memmap-rs) for Rust.
+Calling the instance method `value` gets a `Bytes`/`Slice(UInt8)` that can be read from and manipulated in place safely.
+
+Written with continual reference to the [memmap crate](https://github.com/danburkert/memmap-rs) for Rust.
 
 ## Installation
 
@@ -20,14 +22,22 @@ dependencies:
 
 ```crystal
 require "memmap"
+
+# Maps a file and prints it to stdout
+file = Memmap::MapFile.new("test.txt")
+file_string = String.new(file.value)
+puts file_string
+
+# Maps a file named "test.txt" and replaces every character with 'j'
+file2 = Memmap::MapFile.new("test.txt", mode = "r+")
+file2.value.map! { |v| 106.to_u8 }
+file2.flush()
+
+# Maps a file and then appends some ! chars to it by writing to a new mapped buffer
+file3 = Memmap::MapFile.new("test.txt")
+appendix = Slice(Uint8).new(4, 33)
+file3.write("test2.txt", appendix)
 ```
-
-TODO: Write usage instructions here
-
-## Development
-
-TODO: Write development instructions here
-
 ## Contributing
 
 1. Fork it (<https://github.com/sourgrasses/memmap.cr/fork>)
