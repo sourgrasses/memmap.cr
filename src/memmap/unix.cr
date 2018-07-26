@@ -1,11 +1,8 @@
 require "./mman"
 
-SC_PAGESIZE = 30
-
 module Memmap
   extend self
 
-  @[Flags]
   enum Flag
     Shared  = LibC::MAP_SHARED
     Private = LibC::MAP_PRIVATE
@@ -13,16 +10,16 @@ module Memmap
     Anon    = LibC::MAP_ANONYMOUS
   end
 
-  @[Flags]
   enum Prot
-    Read    = LibC::PROT_READ
-    Write   = LibC::PROT_WRITE
-    None    = LibC::PROT_NONE
+    Read        = LibC::PROT_READ
+    Write       = LibC::PROT_WRITE
+    ReadWrite   = LibC::PROT_READ | LibC::PROT_WRITE
+    None        = LibC::PROT_NONE
   end
 
   # A memory mapped buffer backed by a specified file.
   class MapFile
-    PAGE_SIZE = LibC.sysconf(SC_PAGESIZE)
+    PAGE_SIZE = LibC.sysconf(LibC::SC_PAGESIZE).to_u64
     DEFAULT_PERM = File::Permissions.new(0o644)
     @flag : Flag
     @prot : Prot
@@ -46,27 +43,31 @@ module Memmap
 
       @flag, @prot = parse_mode(mode)
 
-      @map = allocate(aligned_len, aligned_offset)
+      @map = alloc(aligned_len, aligned_offset)
     end
 
     def finalize
+      close()
+    end
+
+    def close
       len = get_aligned_len()
       if LibC.munmap(@map, len) == -1
         raise Errno.new("Error unmapping file")
       end
     end
 
-    protected def allocate(aligned_len : LibC::SizeT, aligned_offset : LibC::SizeT) : UInt8*
+    protected def alloc(aligned_len : LibC::SizeT, aligned_offset : LibC::SizeT) : UInt8*
       fd =
         if @flag == Flag::Shared && File.writable?(@filepath)
-          File.open(@filepath, mode = "rw", perm = DEFAULT_PERM).fd
+          File.open(@filepath, mode = "r+", perm = DEFAULT_PERM).fd
         elsif File.readable?(@filepath)
           File.open(@filepath, mode = "r", perm = DEFAULT_PERM).fd
         else
           raise Errno.new("Unable to open file '#{@filepath}'")
         end
 
-      ptr = LibC.mmap(nil, aligned_len, @prot, @flag, fd, aligned_offset)
+      ptr = LibC.mmap(Pointer(Void).null, aligned_len, @prot.value, @flag.value, fd, aligned_offset)
 
       if ptr == LibC::MAP_FAILED
         raise Errno.new("Unable to create map")
@@ -77,7 +78,7 @@ module Memmap
     end
 
     protected def parse_mode(mode : String)
-      if mode.size == 0
+      if mode.size == 0 || mode.size > 2
         raise "Invalid access mode"
       end
 
@@ -86,12 +87,12 @@ module Memmap
 
       case mode[0]
       when 'r'
-        prot = Prot::Read
-        if mode.size == 2 && mode[1] == 'w'
+        if mode.size == 2 && mode[1] == '+'
           flag = Flag::Shared
-          prot |= Prot::Write
+          prot = Prot::ReadWrite
         else
           flag = Flag::Private
+          prot = Prot::Read
         end
       when 'w'
         prot = Prot::Write
