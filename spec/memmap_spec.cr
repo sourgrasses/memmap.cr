@@ -26,11 +26,10 @@ describe Memmap do
   it "maps a file and appends to it by writing to a new file" do
     File.write("test.txt", "here are a bunch of bytes yet again")
 
-    file = Memmap::MapFile.new("test.txt")
-    appendix = Slice(UInt8).new(4, 33)
-    file.write("test2.txt", appendix)
+    file = Memmap::MapFile.new("test.txt", mode="r+")
+    appendix = " and more!".to_slice
+    file << appendix
 
-    File.read("test2.txt").should eq "here are a bunch of bytes yet again!!!!"
-    File.delete("test2.txt")
+    String.new(file.value).should eq "here are a bunch of bytes yet again and more!"
   end
 end

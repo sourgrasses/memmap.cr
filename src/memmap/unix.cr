@@ -34,6 +34,7 @@ module Memmap
     @flag : Flag
     @prot : Prot
     @len : LibC::SizeT
+    @fd : Int32
     @map : UInt8*
     @value : Bytes
 
@@ -54,6 +55,15 @@ module Memmap
 
       @flag, @prot = parse_mode(mode)
 
+      @fd =
+        if @flag == Flag::Shared && File.writable?(@filepath)
+          File.open(@filepath, mode = "r+", perm = DEFAULT_PERM).fd
+        elsif File.readable?(@filepath)
+          File.open(@filepath, mode = "r", perm = DEFAULT_PERM).fd
+        else
+          raise Errno.new("Unable to open file '#{@filepath}'")
+        end
+
       @map = alloc(aligned_len, aligned_offset)
       @value = Slice.new(@map, @len)
     end
@@ -64,16 +74,7 @@ module Memmap
     end
 
     protected def alloc(aligned_len : LibC::SizeT, aligned_offset : LibC::SizeT) : UInt8*
-      fd =
-        if @flag == Flag::Shared && File.writable?(@filepath)
-          File.open(@filepath, mode = "r+", perm = DEFAULT_PERM).fd
-        elsif File.readable?(@filepath)
-          File.open(@filepath, mode = "r", perm = DEFAULT_PERM).fd
-        else
-          raise Errno.new("Unable to open file '#{@filepath}'")
-        end
-
-      ptr = LibC.mmap(Pointer(Void).null, aligned_len, @prot.value, @flag.value, fd, aligned_offset)
+      ptr = LibC.mmap(Pointer(Void).null, aligned_len, @prot.value, @flag.value, @fd, aligned_offset)
 
       if ptr == LibC::MAP_FAILED
         raise Errno.new("Unable to create map")
@@ -83,12 +84,48 @@ module Memmap
       Pointer(UInt8).new(ptr.address)
     end
 
+    def <<(appendix : Bytes)
+      push(appendix)
+    end
+
     # :nodoc:
-    def append
-      # TODO: mremap and some other fiddly stuff?
+    def push(appendix : Bytes)
+      raise Errno.new("File not mapped with read/write permission") unless @prot = Prot::ReadWrite
+      aligned_len = get_aligned_len()
+      new_len = aligned_len + appendix.size
+
+      if LibC.ftruncate(@fd, new_len) == -1
+        raise Errno.new("Error truncating file to new length")
+      end
+      if LibC.lseek(@fd, aligned_len, LibC::SEEK_SET) == -1
+        raise Errno.new("Error lseeking to offset #{@len}")
+      end
+      if LibC.write(@fd, appendix.to_unsafe, appendix.size) == -1
+        raise Errno.new("Error appending to file")
+      end
+
       {% if flag?(:linux) %}
-      {% elsif flag?(:darwin)  || flag?(:freebsd) || flag(:openbsd) %}
+        ptr = LibC.mremap(@map, aligned_len, new_len, LibC::MREMAP_MAYMOVE)
+        if ptr == LibC::MAP_FAILED
+         raise Errno.new("Error remapping file")
+        elsif ptr.address != @map.address
+          @map = Pointer(UInt8).new(ptr.address)
+        end
+      {% else %}
+        aligned_offset = @offset - (@offset % PAGE_SIZE)
+        if LibC.munmap(@map, aligned_len) == -1
+         raise Errno.new("Error remapping file")
+        end
+
+        ptr = LibC.mmap(@map, aligned_len, @prot.value, @flag.value, @fd, aligned_offset)
+        if ptr == LibC::MAP_FAILED
+         raise Errno.new("Error remapping file")
+        end
+        @map = Pointer(UInt8).new(ptr.address)
       {% end %}
+
+      @len = new_len
+      @value = Slice.new(@map, @len)
     end
 
     # Returns the buffer as a raw `Pointer(UInt8)`. This is unsafe, obviously.
@@ -127,6 +164,12 @@ module Memmap
 
     def to_s
       @value.to_s()
+    end
+
+    def read(slice : Bytes)
+      slice.size.times { |i| @value[i] }
+      @value += slice.size
+      slice.size
     end
 
     # Append a `Slice(UInt8)`/`Bytes` to a mapped file by writing the already-mapped buffer concatenated
