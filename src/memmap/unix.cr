@@ -33,6 +33,7 @@ module Memmap
     DEFAULT_PERM = File::Permissions.new(0o644)
     @flag : Flag
     @prot : Prot
+    @alignment : LibC::SizeT
     @len : LibC::SizeT
     @fd : Int32
     @map : UInt8*
@@ -49,9 +50,9 @@ module Memmap
         raise Errno.new("Error `stat`ing specified path")
       end
 
-      alignment = @offset % PAGE_SIZE
-      aligned_offset = @offset - alignment
-      aligned_len = @len + alignment
+      @alignment = @offset % PAGE_SIZE
+      aligned_offset = @offset - @alignment
+      aligned_len = @len + @alignment
 
       @flag, @prot = parse_mode(mode)
 
@@ -66,11 +67,6 @@ module Memmap
 
       @map = alloc(aligned_len, aligned_offset)
       @value = Slice.new(@map, @len)
-    end
-
-    # :nodoc:
-    def finalize
-      close()
     end
 
     protected def alloc(aligned_len : LibC::SizeT, aligned_offset : LibC::SizeT) : UInt8*
@@ -93,13 +89,13 @@ module Memmap
     # calling `mremap` if we're on Linux or `munmap` and then `mmap` if we're on macOS/FreeBSD/whatever.
     def push(appendix : Bytes)
       raise Errno.new("File not mapped with read/write permission") unless @prot = Prot::ReadWrite
-      aligned_len = get_aligned_len()
+      aligned_len = @alignment + @len
       new_len = aligned_len + appendix.size
 
       if LibC.ftruncate(@fd, new_len) == -1
         raise Errno.new("Error truncating file to new length")
       end
-      if LibC.lseek(@fd, aligned_len, LibC::SEEK_SET) == -1
+      if LibC.lseek(@fd, aligned_len, IO::Seek::Set) == -1
         raise Errno.new("Error lseeking to offset #{@len}")
       end
       if LibC.write(@fd, appendix.to_unsafe, appendix.size) == -1
@@ -135,14 +131,6 @@ module Memmap
       @map
     end
 
-    # Force the map to close before the GC runs `finalize`
-    def close
-      len = get_aligned_len()
-      if LibC.munmap(@map, len) == -1
-        raise Errno.new("Error unmapping file")
-      end
-    end
-
     # Flush changes made in the map back into the filesystem. Synchronous/blocking version.
     def flush
       LibC.msync(@map, @len, LibC::MS_SYNC)
@@ -154,13 +142,13 @@ module Memmap
 
     # Call `mprotect` to change the 'prot' flags to be read-only
     def make_read_only
-      len = get_aligned_len()
+      len = @alignment + @len
       LibC.mprotect(@map, len, Prot::Read)
     end
 
     # Call `mprotect` to change the 'prot' flags to allow reading and writing
     def make_writable
-      len = get_aligned_len()
+      len = @alignment + @len
       LibC.mprotect(@map, len, Prot::ReadWrite)
     end
 
@@ -174,12 +162,19 @@ module Memmap
       slice.size
     end
 
+    # Move the seek pointer for the mapped fdesc
+    def seek(offset, whence : Seek = IO::Seek::Set)
+      if LibC.lseek(@fd, aligned_len, IO::Seek::Set) == -1
+        raise Errno.new("Error lseeking to offset #{@len}")
+      end
+    end
+
     # Append a `Slice(UInt8)`/`Bytes` to a mapped file by writing the already-mapped buffer concatenated
     # with the new bytes to a newly allocated mapped buffer backed by a new file.
     # This relies on `ftruncate` and some pointer arithmetic to work correctly, so tread carefully.
     # If you point it in the wrong direction it will eat your data.
     def write(filepath : String, appendix : Bytes) : Symbol
-      len = get_aligned_len() + appendix.size
+      len = @alignment + @len + appendix.size
       # Clean the path out and write a garbage byte in there
       File.write(filepath, "\0")
       fd = File.open(filepath, mode = "r+", perm = DEFAULT_PERM).fd
@@ -191,8 +186,8 @@ module Memmap
       ptr = LibC.mmap(Pointer(Void).null, len, Prot::ReadWrite, Flag::Shared, fd, @offset)
       ptr = Pointer(UInt8).new(ptr.address)
 
-      @map.copy_to(ptr, get_aligned_len())
-      appendix.copy_to(ptr + get_aligned_len(), appendix.size)
+      @map.copy_to(ptr, @alignment + @len)
+      appendix.copy_to(ptr + @alignment + @len, appendix.size)
       LibC.msync(ptr, len, LibC::MS_SYNC)
 
       if LibC.munmap(ptr, len) == -1
@@ -200,6 +195,19 @@ module Memmap
       end
 
       :ok
+    end
+
+    # :nodoc:
+    def finalize
+      close()
+    end
+
+    # Force the map to close before the GC runs `finalize`
+    def close
+      len = @alignment + @len
+      if LibC.munmap(@map, len) == -1
+        raise Errno.new("Error unmapping file")
+      end
     end
 
     protected def parse_mode(mode : String)
@@ -224,11 +232,6 @@ module Memmap
       end
 
       {flag, prot}
-    end
-
-    protected def get_aligned_len
-      alignment = instance_sizeof(typeof(@map)) % PAGE_SIZE
-      (@len + alignment).as(LibC::SizeT)
     end
   end
 end

@@ -7,10 +7,6 @@ lib LibC
   MREMAP_MAYMOVE    = 1
   MREMAP_FIXED      = 2
 
-  SEEK_SET  = 0
-  SEEK_CUR  = 1
-  SEEK_END  = 2
-
   fun msync(addr : Void*, len : SizeT, flags : Int)
 
   {% if flag?(:linux) %}
