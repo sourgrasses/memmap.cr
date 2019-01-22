@@ -164,7 +164,7 @@ module Memmap
 
     # Move the seek pointer for the mapped fdesc
     def seek(offset, whence : IO::Seek = IO::Seek::Set)
-      if LibC.lseek(@fd, aligned_len, IO::Seek::Set) == -1
+      if LibC.lseek(@fd, @alignment + @len, IO::Seek::Set) == -1
         raise Errno.new("Error lseeking to offset #{@len}")
       end
     end
