@@ -88,7 +88,9 @@ module Memmap
       push(appendix)
     end
 
-    # :nodoc:
+    # Append a `Slice(UInt8)`/`Bytes` to a mapped file by calling `ftruncate` on the mapped file's
+    # fdesc, `lseek`ing to the 'old' end of the file, writing the `Bytes` to the file, and either
+    # calling `mremap` if we're on Linux or `munmap` and then `mmap` if we're on macOS/FreeBSD/whatever.
     def push(appendix : Bytes)
       raise Errno.new("File not mapped with read/write permission") unless @prot = Prot::ReadWrite
       aligned_len = get_aligned_len()

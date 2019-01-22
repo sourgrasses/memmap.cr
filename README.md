@@ -4,7 +4,7 @@
 
 Little lib to make using [`mmap()`](http://man7.org/linux/man-pages/man2/mmap.2.html) and related system calls relatively easy and hopefully fairly idiomatic.
 
-Right now this only handles fixed-size maps. If you need to append something to the file you have mapped you can call `MapFile.write` to `ftruncate` a file, create a new mapped buffer of the fixed size, and `memcpy` from the read buffer and the `Slice` to be appended into the second buffer.
+Currently you can use either the `<<` operator/`push` function to append `Bytes` to a mapped file, which calls `ftruncate` to expand te file size to fit the new data, advances the seek pointer to the old end of the file, writes whatever has been pushed, and calls `mremap` on Linux or simply `munmap` and then `mmap` elsewhere, or, if you prefer to copy the contents of the mapped file to a new mapped file with the new `Bytes` appended, you can call `MapFile.write` to `ftruncate` a file, create a new mapped buffer of the fixed size, and `memcpy` from the read buffer and the `Bytes` to be appended into the second buffer.
 
 Calling the instance method `value` gets a `Bytes`/`Slice(UInt8)` that can be read from and manipulated in place safely.
 
@@ -25,20 +25,22 @@ dependencies:
 ```crystal
 require "memmap"
 
-# Maps a file and prints it to stdout
+# Maps a file named "test.txt" and prints it to stdout
 file = Memmap::MapFile.new("test.txt")
 file_string = String.new(file.value)
 puts file_string
 
-# Maps a file named "test.txt" and replaces every character with 'j'
+# Maps a file and replaces every character with 'j'
 file2 = Memmap::MapFile.new("test.txt", mode = "r+")
 file2.value.map! { |v| 106.to_u8 }
 file2.flush()
 
-# Maps a file and then appends some ! chars to it by writing to a new mapped buffer
-file3 = Memmap::MapFile.new("test.txt")
-appendix = Slice(Uint8).new(4, 33)
-file3.write("test2.txt", appendix)
+# Maps a file and then appends a string to it
+File.write("test.txt", "here are a bunch of bytes yet again")
+
+file = Memmap::MapFile.new("test.txt", mode="r+")
+appendix = " and more!".to_slice
+file << appendix
 ```
 ## Contributing
 
