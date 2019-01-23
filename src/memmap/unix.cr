@@ -23,7 +23,7 @@ module Memmap
   # Any access through the raw pointer interface can cause segmentation faults or undefined behavior unless you're really careful, 
   # while accessing the buffer through a `Slice` allows you to reap the potential benefits of using `mmap` without shooting
   # yourself in the foot because of its bound checks.
-  class MapFile
+  class MapFile < IO
     {% if flag?(:x86_64) || flag?(:aarch64) %}
       PAGE_SIZE = LibC.sysconf(LibC::SC_PAGESIZE).to_u64
     {% elsif flag?(:i686) || flag?(:arm) || flag?(:win32) %}
@@ -81,13 +81,13 @@ module Memmap
     end
 
     def <<(appendix : Bytes)
-      push(appendix)
+      write(appendix)
     end
 
     # Append a `Slice(UInt8)`/`Bytes` to a mapped file by calling `ftruncate` on the mapped file's
     # fdesc, `lseek`ing to the 'old' end of the file, writing the `Bytes` to the file, and either
     # calling `mremap` if we're on Linux or `munmap` and then `mmap` if we're on macOS/FreeBSD/whatever.
-    def push(appendix : Bytes)
+    def write(appendix : Bytes)
       raise Errno.new("File not mapped with read/write permission") unless @prot = Prot::ReadWrite
       aligned_len = @alignment + @len
       new_len = aligned_len + appendix.size
@@ -157,8 +157,7 @@ module Memmap
     end
 
     def read(slice : Bytes)
-      slice.size.times { |i| @value[i] }
-      @value += slice.size
+      slice.size.times { |i| slice[i] = @value[i] }
       slice.size
     end
 
@@ -173,7 +172,7 @@ module Memmap
     # with the new bytes to a newly allocated mapped buffer backed by a new file.
     # This relies on `ftruncate` and some pointer arithmetic to work correctly, so tread carefully.
     # If you point it in the wrong direction it will eat your data.
-    def write(filepath : String, appendix : Bytes) : Symbol
+    def copy_append(filepath : String, appendix : Bytes) : Symbol
       len = @alignment + @len + appendix.size
       # Clean the path out and write a garbage byte in there
       File.write(filepath, "\0")
