@@ -1,9 +1,9 @@
 name: memmap
-version: 0.1.0
+version: 0.2.0
 
 authors:
-  - Jenn Wheeler <jwheeler@antiochcollege.edu>
+  - Jenn Wheeler <jwheelerac@gmail.com>
 
-crystal: 0.25.1
+crystal: 0.36.1
 
 license: MIT

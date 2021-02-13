@@ -2,7 +2,7 @@ lib LibC
   MS_ASYNC      = 1
   MS_SYNC       = 4
   MS_INVALIDATE = 2
-  SC_PAGESIZE   = 30
+  # SC_PAGESIZE   = 30
 
   MREMAP_MAYMOVE    = 1
   MREMAP_FIXED      = 2

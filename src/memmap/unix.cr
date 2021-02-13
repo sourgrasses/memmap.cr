@@ -17,6 +17,9 @@ module Memmap
     None        = LibC::PROT_NONE
   end
 
+  class MemmapError < Exception
+  end
+
   # A memory mapped buffer backed by a specified file.
   #
   # The safest way to access the data mapped is through the `value` getter, which returns a `Slice(UInt8)`.
@@ -45,9 +48,9 @@ module Memmap
     def initialize(@filepath : String, mode = "r", @offset : LibC::SizeT = 0)
       stat = uninitialized LibC::Stat
       if LibC.stat(@filepath.check_no_null_byte, pointerof(stat)) == 0
-        @len = Crystal::System::FileInfo.new(stat).size
+        @len = File.size(@filepath).to_u64
       else
-        raise Errno.new("Error `stat`ing specified path")
+        raise MemmapError.new("Error `stat`ing specified path")
       end
 
       @alignment = @offset % PAGE_SIZE
@@ -62,7 +65,7 @@ module Memmap
         elsif File.readable?(@filepath)
           File.open(@filepath, mode = "r", perm = DEFAULT_PERM).fd
         else
-          raise Errno.new("Unable to open file '#{@filepath}'")
+          raise MemmapError.new("Unable to open file '#{@filepath}'")
         end
 
       @map = alloc(aligned_len, aligned_offset)
@@ -73,7 +76,7 @@ module Memmap
       ptr = LibC.mmap(Pointer(Void).null, aligned_len, @prot.value, @flag.value, @fd, aligned_offset)
 
       if ptr == LibC::MAP_FAILED
-        raise Errno.new("Unable to create map")
+        raise MemmapError.new("Unable to create map")
       end
 
       # Cast the `void*` returned by `mmap()` to a `char*`, `UInt8*` in Crystal
@@ -87,37 +90,37 @@ module Memmap
     # Append a `Slice(UInt8)`/`Bytes` to a mapped file by calling `ftruncate` on the mapped file's
     # fdesc, `lseek`ing to the 'old' end of the file, writing the `Bytes` to the file, and either
     # calling `mremap` if we're on Linux or `munmap` and then `mmap` if we're on macOS/FreeBSD/whatever.
-    def write(appendix : Bytes)
-      raise Errno.new("File not mapped with read/write permission") unless @prot = Prot::ReadWrite
+    def write(appendix : Bytes) : Nil
+      raise MemmapError.new("File not mapped with read/write permission") unless @prot = Prot::ReadWrite
       aligned_len = @alignment + @len
       new_len = aligned_len + appendix.size
 
       if LibC.ftruncate(@fd, new_len) == -1
-        raise Errno.new("Error truncating file to new length")
+        raise MemmapError.new("Error truncating file to new length")
       end
       if LibC.lseek(@fd, aligned_len, IO::Seek::Set) == -1
-        raise Errno.new("Error lseeking to offset #{@len}")
+        raise MemmapError.new("Error lseeking to offset #{@len}")
       end
       if LibC.write(@fd, appendix.to_unsafe, appendix.size) == -1
-        raise Errno.new("Error appending to file")
+        raise MemmapError.new("Error appending to file")
       end
 
       {% if flag?(:linux) %}
         ptr = LibC.mremap(@map, aligned_len, new_len, LibC::MREMAP_MAYMOVE)
         if ptr == LibC::MAP_FAILED
-         raise Errno.new("Error remapping file")
+         raise MemmapError.new("Error remapping file")
         elsif ptr.address != @map.address
           @map = Pointer(UInt8).new(ptr.address)
         end
       {% else %}
         aligned_offset = @offset - (@offset % PAGE_SIZE)
         if LibC.munmap(@map, aligned_len) == -1
-         raise Errno.new("Error remapping file")
+         raise MemmapError.new("Error remapping file")
         end
 
         ptr = LibC.mmap(@map, aligned_len, @prot.value, @flag.value, @fd, aligned_offset)
         if ptr == LibC::MAP_FAILED
-         raise Errno.new("Error remapping file")
+         raise MemmapError.new("Error remapping file")
         end
         @map = Pointer(UInt8).new(ptr.address)
       {% end %}
@@ -164,7 +167,7 @@ module Memmap
     # Move the seek pointer for the mapped fdesc
     def seek(offset, whence : IO::Seek = IO::Seek::Set)
       if LibC.lseek(@fd, @alignment + @len, IO::Seek::Set) == -1
-        raise Errno.new("Error lseeking to offset #{@len}")
+        raise MemmapError.new("Error lseeking to offset #{@len}")
       end
     end
 
@@ -205,7 +208,7 @@ module Memmap
     def close
       len = @alignment + @len
       if LibC.munmap(@map, len) == -1
-        raise Errno.new("Error unmapping file")
+        raise MemmapError.new("Error unmapping file")
       end
     end
 
