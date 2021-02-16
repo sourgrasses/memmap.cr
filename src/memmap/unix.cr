@@ -132,13 +132,19 @@ module Memmap
       @map
     end
 
-    # Flush changes made in the map back into the filesystem. Synchronous/blocking version.
+    # Flush changes made in the map back into the filesystem. Synchronous 
+    # version requests an update and waits for it to complete.
     def flush
       LibC.msync(@map, @len, LibC::MS_SYNC)
     end
 
-    # :nodoc:
+    # Flush changes made in the map back into the filesystem. Asynchronous 
+    # version requests and update and waits for it to complete. According to 
+    # the [man page for msync](https://www.man7.org/linux/man-pages/man2/msync.2.html#NOTES) 
+    # this has been a noop on Linux since 2.6.19 since the kernel already tracks 
+    # dirty pages.
     def flush_async
+      LibC.msync(@map, @len, LibC::MS_ASYNC)
     end
 
     # Call `mprotect` to change the 'prot' flags to be read-only
