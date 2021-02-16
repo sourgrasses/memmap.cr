@@ -27,18 +27,16 @@ require "memmap"
 
 # Maps a file named "test.txt" and prints it to stdout
 file = Memmap::MapFile.new("test.txt")
-file_string = String.new(file.value)
-puts file_string
+puts String.new(file.value)
 
 # Maps a file and replaces every character with 'j'
 file2 = Memmap::MapFile.new("test.txt", mode = "r+")
 file2.value.map! { |v| 106.to_u8 }
 file2.flush()
 
-# Maps a file and then appends a string to it
+# Writes a string to a file, maps it, and then appends a string to it
 File.write("test.txt", "here are a bunch of bytes yet again")
-
-file = Memmap::MapFile.new("test.txt", mode="r+")
+file = Memmap::MapFile.new("test.txt", mode = "r+")
 appendix = " and more!".to_slice
 file << appendix
 ```

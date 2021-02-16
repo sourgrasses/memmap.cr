@@ -7,14 +7,14 @@ module Memmap
     Shared  = LibC::MAP_SHARED
     Private = LibC::MAP_PRIVATE
     Fixed   = LibC::MAP_FIXED
-    Anon    = LibC::MAP_ANONYMOUS
+    Anon    = LibC::MAP_ANON
   end
 
   enum Prot
-    Read        = LibC::PROT_READ
-    Write       = LibC::PROT_WRITE
-    ReadWrite   = LibC::PROT_READ | LibC::PROT_WRITE
-    None        = LibC::PROT_NONE
+    Read      = LibC::PROT_READ
+    Write     = LibC::PROT_WRITE
+    ReadWrite = LibC::PROT_READ | LibC::PROT_WRITE
+    None      = LibC::PROT_NONE
   end
 
   class MemmapError < Exception
@@ -23,7 +23,7 @@ module Memmap
   # A memory mapped buffer backed by a specified file.
   #
   # The safest way to access the data mapped is through the `value` getter, which returns a `Slice(UInt8)`.
-  # Any access through the raw pointer interface can cause segmentation faults or undefined behavior unless you're really careful, 
+  # Any access through the raw pointer interface can cause segmentation faults or undefined behavior unless you're really careful,
   # while accessing the buffer through a `Slice` allows you to reap the potential benefits of using `mmap` without shooting
   # yourself in the foot because of its bound checks.
   class MapFile < IO
@@ -31,7 +31,7 @@ module Memmap
       PAGE_SIZE = LibC.sysconf(LibC::SC_PAGESIZE).to_u64
     {% elsif flag?(:i686) || flag?(:arm) || flag?(:win32) %}
       PAGE_SIZE = LibC.sysconf(LibC::SC_PAGESIZE).to_u32
-    {% end%}
+    {% end %}
 
     DEFAULT_PERM = File::Permissions.new(0o644)
     @flag : Flag
@@ -40,9 +40,7 @@ module Memmap
     @len : LibC::SizeT
     @fd : Int32
     @map : UInt8*
-    @value : Bytes
-
-    getter value
+    getter value : Bytes
 
     # Create an instance of `MapFile`.
     def initialize(@filepath : String, mode = "r", @offset : LibC::SizeT = 0)
@@ -108,19 +106,19 @@ module Memmap
       {% if flag?(:linux) %}
         ptr = LibC.mremap(@map, aligned_len, new_len, LibC::MREMAP_MAYMOVE)
         if ptr == LibC::MAP_FAILED
-         raise MemmapError.new("Error remapping file")
+          raise MemmapError.new("Error remapping file")
         elsif ptr.address != @map.address
           @map = Pointer(UInt8).new(ptr.address)
         end
       {% else %}
         aligned_offset = @offset - (@offset % PAGE_SIZE)
         if LibC.munmap(@map, aligned_len) == -1
-         raise MemmapError.new("Error remapping file")
+          raise MemmapError.new("Error remapping file")
         end
 
         ptr = LibC.mmap(@map, aligned_len, @prot.value, @flag.value, @fd, aligned_offset)
         if ptr == LibC::MAP_FAILED
-         raise MemmapError.new("Error remapping file")
+          raise MemmapError.new("Error remapping file")
         end
         @map = Pointer(UInt8).new(ptr.address)
       {% end %}
@@ -155,8 +153,8 @@ module Memmap
       LibC.mprotect(@map, len, Prot::ReadWrite)
     end
 
-    def to_s
-      @value.to_s()
+    def to_s(io : IO)
+      @value.to_s(io)
     end
 
     def read(slice : Bytes)
